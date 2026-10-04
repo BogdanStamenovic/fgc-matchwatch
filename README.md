@@ -26,8 +26,14 @@ scout server stays light and only receives JSON.
    play-by-play announcer; field 5 is the main stage, so its stream carries the
    booth commentary. `streams discover` scrapes the live page and the channel
    and parses those titles; `streams add <id>` is the manual override.
-   A match maps to the stream of its field that was live at its scheduled time;
-   if there is none, it falls back to the main feed.
+   A match maps to the stream of its field that was live at its scheduled time,
+   then (main-stage field only) the main feed, then same-field streams of later
+   days, because matches slip later and never earlier: 2025's round robin was
+   scheduled for Day 2 and played on Day 3. For a slipped match the time prior
+   is dropped and its tournament's matches are aligned on order, teams and
+   call-outs alone. Every video id discovery has looked at is cached for 6 h,
+   so the 5-minute timer does not re-query YouTube for the same dozen videos;
+   titles it ignores are logged once.
 3. **Audio.** A finished stream (VOD) is downloaded as 63 kbps opus, about
    30 MB per hour. A live stream is recorded by `fgc-matchwatch record <id>`
    with `--live-from-start`, as a transient systemd user unit that the timer
@@ -64,7 +70,8 @@ scout server stays light and only receives JSON.
 8. **POST.** One observation per team, id = sha256(matchKey|code|pipeline
    version), so a re-POST replaces rather than duplicates.
 
-State (`state.json`) is written after every match: finished matches are never
+State (`state-<year>.json`, per season because match keys like `t2-98`
+repeat every year) is written after every match: finished matches are never
 redone, and a match that cannot be placed yet is retried on the next runs (up
 to 6 times, so about 30 minutes under the timer) before it is given up.
 
@@ -83,7 +90,7 @@ to 6 times, so about 30 minutes under the timer) before it is given up.
 | Tuning set: 54 hand-labelled starts (`bench/onset_sweep.py`) | 53/54 within 30 s, 52/54 within 10 s; not independent, it is what the fixes were tuned on |
 | Main feed vs. field-5 stream, same 35 Day 1 matches (the same booth audio, so this checks consistency, not truth) | 30/35 agree to within 1 s; of the other 5, 2 sit at a VOD gap, 1 match was restarted, 2 differ by 100–200 s |
 | Ablated aligner (no number/score features) vs. spoken match number or score read-out | 0 verified wrong among confident placements (2 flagged, both checker false alarms) |
-| LLM (Sonnet via `claude -p`), 12 matches / 72 observations | 12/12 valid JSON first try; 132 claims kept, 13 dropped by verification (9%); 57/72 observations have at least one fact |
+| LLM (Sonnet via `claude -p`), 26 matches through the full pipeline, 186 observations POSTed to a local fgc-scout | 26/26 valid JSON on the first try (no retries needed); 193 claims kept, 16 dropped by verification (7.7%); 112/186 observations carry at least one fact, the rest are honest empties |
 
 Why turbo over distil: distil was 30% faster on the clip, but both are far
 faster than needed (a 5 h field-day takes 2–3 minutes), and turbo is the
@@ -188,8 +195,18 @@ node server/server.mjs`, whose `/api/interest` then returns Serbia's 2025 matche
 - **Misheard names lose facts, never invent them.** "Lesotho" transcribed as
   "Lizotho" means its quotes are not attributed and its observation is empty.
   The alias table in `align.py` is the fix, one country at a time.
-- **The summary is LLM prose.** It is published only when at least one
-  verified claim exists, but its sentences are not individually verified.
+- **Verification checks attribution, not interpretation.** A claim survives
+  if its quote is in the transcript and the team is named next to it. Whether
+  the LLM read the quote right is not checked. Seen in the 2025 run: "Serbia
+  taking some great shots *trying* to add those" became `shooterWorks: true`,
+  and a remark about field geometry next to Serbia's name became a Serbia
+  "problem". Treat facts as leads with a source link, not verdicts.
+- **The summary is composed from verified facts only** ("Strategy: … Good
+  at: … Problems: …"). That is drier than LLM prose, on purpose: the LLM's own
+  summaries repeated claims whose quotes had been dropped.
+- **The official schedule can be wrong by a day.** Handled for matches that
+  slip to a later stream of the same field (above). A match moved to a
+  different field than the API says would not be found.
 - **2026 vocabulary is untested on 2026 audio**, because none exists yet. The
   prompt and Whisper's initial prompt carry the 2026 terms; whether the
   commentators actually say "brace" and "suppression unit" is unknown.

@@ -63,3 +63,28 @@ def test_dry_run_with_explicit_matches(tmp_path: Path, monkeypatch: pytest.Monke
                                 "participants": [], "played": True}], {})
     monkeypatch.setattr(pipeline, "schedule", lambda cfg, max_age=120: sched)
     assert main(["-q", "run", "--dry-run", "--matches", "t2-1,t2-999"]) == 0
+
+
+def test_streams_for_tries_later_days_for_slipped_matches() -> None:
+    m = {"scheduledTime": "2025-10-31T15:12:00-05:00", "field": 5}
+    t = pipeline.epoch(m["scheduledTime"])
+    streams = {
+        "d2main": {"video": "d2main", "field": None, "start": t - 20000, "duration": 31000,
+                   "live_status": "was_live"},
+        "d3f5": {"video": "d3f5", "field": 5, "start": t + 60000, "duration": 34000,
+                 "live_status": "was_live"},
+        "d3f1": {"video": "d3f1", "field": 1, "start": t + 60000, "duration": 11000,
+                 "live_status": "was_live"},
+    }
+    order = [s["video"] for s in pipeline.streams_for(streams, m, main=5)]
+    assert order == ["d2main", "d3f5"]
+
+
+def test_state_is_per_year(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fgc_matchwatch import config
+
+    monkeypatch.setenv("MATCHWATCH_HOME", str(tmp_path))
+    monkeypatch.setenv("MATCHWATCH_YEAR", "2025")
+    a = config.load().state_file
+    monkeypatch.setenv("MATCHWATCH_YEAR", "2026")
+    assert config.load().state_file != a

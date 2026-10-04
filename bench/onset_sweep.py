@@ -7,7 +7,7 @@ from fgc_matchwatch import align, pipeline
 
 H="/mnt/offload/fgc-matchwatch/"
 api=json.load(open(H+"api2025.json")); names={r["team"]["country"]:r["team"]["name"] for r in api["rankings"]}
-st=json.load(open(H+"streams.json"))
+st=json.load(open(H+"streams-2025.json"))
 # hand-verified truth (stream, key) -> true start, from the samples
 T={("Hy2VGJjoMoo","t2-25"):3529,("Hy2VGJjoMoo","t2-13"):1848,("YRncWpIEcEQ","t2-50"):9190,("YRncWpIEcEQ","t2-20"):2588,
 ("XJjwMkiiwuQ","t2-95"):16574,("XJjwMkiiwuQ","t2-89"):15830,("FbAeVwfciMQ","t2-313"):4018,("FbAeVwfciMQ","t2-337"):7566,

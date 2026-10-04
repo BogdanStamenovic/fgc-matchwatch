@@ -56,13 +56,15 @@ class Config:
     def models_dir(self) -> Path:
         return self.home / "models"
 
+    # Per season: match keys like "t2-98" repeat every year, so one state file
+    # would make 2026's match 98 look done because 2025's was.
     @property
     def state_file(self) -> Path:
-        return self.home / "state.json"
+        return self.home / f"state-{self.year}.json"
 
     @property
     def streams_file(self) -> Path:
-        return self.home / "streams.json"
+        return self.home / f"streams-{self.year}.json"
 
     @property
     def log_file(self) -> Path:

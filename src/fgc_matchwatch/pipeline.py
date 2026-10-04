@@ -379,8 +379,11 @@ def build_observations(cfg: Config, sched: Schedule, m: dict[str, Any], s: dict[
 
 def refresh_streams(cfg: Config, log: Log) -> dict[str, Any]:
     streams = load_streams(cfg)
-    streams = media.discover(cfg.live_page, cfg.year, streams, log)
+    seen_f = cfg.cache_dir / "seen-videos.json"
+    seen = json.loads(seen_f.read_text()) if seen_f.is_file() else {}
+    streams = media.discover(cfg.live_page, cfg.year, streams, log, seen)
     save_streams(cfg, streams)
+    seen_f.write_text(json.dumps(seen))
     return streams
 
 

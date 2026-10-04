@@ -125,9 +125,24 @@ def channel_streams(limit: int = 10) -> list[str]:
     return [x.strip() for x in out.splitlines() if x.strip()]
 
 
+def _in_year(s: Stream, year: str) -> bool:
+    if year in s.title:
+        return True
+    if s.start:
+        return time.gmtime(s.start).tm_year == int(year)
+    return s.live_status in ("is_live", "is_upcoming")
+
+
 def discover(live_page: str, year: str, known: dict[str, Any],
-             log: Callable[[str], None]) -> dict[str, Any]:
-    """Merge newly found streams of `year` into `known` (video id -> stream dict)."""
+             log: Callable[[str], None], seen: dict[str, Any] | None = None
+             ) -> dict[str, Any]:
+    """Merge newly found streams of `year` into `known` (video id -> stream dict).
+
+    `seen` caches every id already looked at, matched or not, so a run every five
+    minutes does not re-query the same dozen videos through YouTube each time;
+    only live/upcoming ones and anything older than 6 h are looked at again.
+    """
+    seen = {} if seen is None else seen
     ids: list[str] = []
     try:
         ids += embeds_on_page(live_page)
@@ -137,11 +152,16 @@ def discover(live_page: str, year: str, known: dict[str, Any],
         ids += channel_streams()
     except MatchwatchError as exc:
         log(f"channel listing failed: {exc}")
+    now = time.time()
     for vid in dict.fromkeys(ids):
         old = known.get(vid)
-        if old and old.get("live_status") not in ("is_live", "is_upcoming") and not old.get("manual"):
-            continue
         if old and old.get("manual"):
+            continue
+        if old and old.get("live_status") not in ("is_live", "is_upcoming"):
+            continue
+        prev = seen.get(vid)
+        if (not old and prev and now - prev.get("checked", 0) < 6 * 3600
+                and prev.get("live_status") not in ("is_live", "is_upcoming")):
             continue
         try:
             s = info(vid)
@@ -150,7 +170,11 @@ def discover(live_page: str, year: str, known: dict[str, Any],
         except MatchwatchError as exc:
             log(f"skip {vid}: {exc}")
             continue
-        if year not in s.title or s.day is None:
+        seen[vid] = {"title": s.title, "live_status": s.live_status, "checked": now}
+        if not _in_year(s, year) or (s.day is None and s.field is None):
+            if not prev:
+                log(f"ignored stream {vid}: {s.title!r} [{s.live_status}] (not a "
+                    f"{year} 'Day N, Field M' stream; `streams add` it if it is one)")
             continue
         known[vid] = s.to_json()
         log(f"stream {vid}: {s.title} [{s.live_status}]")
