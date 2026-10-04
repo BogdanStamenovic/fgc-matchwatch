@@ -187,6 +187,15 @@ def stream_for(cfg: Config, streams: dict[str, Any], m: dict[str, Any],
     still running or long enough to contain it. Falls back to the main feed only
     for the main-stage field: the main feed never shows the side fields, and
     aligning a side-field match against it would invent a placement."""
+    found = streams_for(streams, m, main)
+    return found[0] if found else None
+
+
+def streams_for(streams: dict[str, Any], m: dict[str, Any], main: int | None = None
+                ) -> list[dict[str, Any]]:
+    """Candidate streams for a match, best first: its field's stream, then (for the
+    main-stage field only) the main program feed. The field-5 VOD of 2025 Day 1
+    starts after match 3, which the main feed has."""
     t = epoch(m["scheduledTime"])
     fld = m.get("field") or m.get("fieldNumber")
 
@@ -196,17 +205,22 @@ def stream_for(cfg: Config, streams: dict[str, Any], m: dict[str, Any],
             return False
         if s.get("live_status") == "is_live":
             return True
-        dur = s.get("duration") or 0
         # VODs drop paused stretches, so a stream can be shorter than the day it
         # covered. Allow a generous tail rather than missing the stream.
-        return t <= st + dur * 1.6 + 3600
+        return t <= st + (s.get("duration") or 0) * 1.6 + 3600
 
-    cands = [s for s in streams.values() if s.get("field") == fld and covers(s)]
-    if not cands and main is not None and fld == main:
-        cands = [s for s in streams.values() if s.get("field") is None and covers(s)]
-    if not cands:
-        return None
-    return max(cands, key=lambda s: s["start"])
+    by_start = sorted(streams.values(), key=lambda s: -(s.get("start") or 0))
+    out = [s for s in by_start if s.get("field") == fld and covers(s)]
+    if main is not None and fld == main:
+        out += [s for s in by_start if s.get("field") is None and covers(s)]
+    # Matches slip later, never earlier: same-field streams from later days, then
+    # (main field) later main feeds. 2025's round robin ran a day after schedule.
+    later = sorted((s for s in streams.values() if (s.get("start") or 0) > t + 3600
+                    and s not in out), key=lambda s: s["start"])
+    out += [s for s in later if s.get("field") == fld]
+    if main is not None and fld == main:
+        out += [s for s in later if s.get("field") is None]
+    return out
 
 
 def _unit(vid: str) -> str:
@@ -295,16 +309,26 @@ def spec_of(m: dict[str, Any]) -> align.MatchSpec:
 
 def place(sched: Schedule, s: dict[str, Any], tr: dict[str, Any], m: dict[str, Any]
           ) -> align.Placement:
-    """Align every match of this field during this stream, return the one we want."""
+    """Align every match of this field during this stream, return the one we want.
+
+    If the match's scheduled time is outside the stream (it slipped to a later
+    day), align its tournament's played matches on this field with no time prior.
+    """
     fld = m.get("field")
     st = s["start"]
     end = st + max(s.get("duration") or 0, (tr.get("duration") or 0)) * 1.6 + 3600
-    same = [x for x in sched.matches
-            if x.get("field") == fld and st - 1800 <= match_time(x) <= end
-            and x.get("participants")]
-    specs = [spec_of(x) for x in same]
     key = f"{m['tournamentKey']}-{m['id']}"
-    for p in align.align(tr["words"], st, specs, sched.names):
+    inside = st - 1800 <= match_time(m) <= end
+    if inside:
+        same = [x for x in sched.matches
+                if x.get("field") == fld and st - 1800 <= match_time(x) <= end
+                and x.get("participants")]
+    else:
+        same = [x for x in sched.matches
+                if x.get("field") == fld and x.get("tournamentKey") == m.get("tournamentKey")
+                and x.get("participants") and x.get("played", True)]
+    specs = [spec_of(x) for x in same]
+    for p in align.align(tr["words"], st, specs, sched.names, trust_schedule=inside):
         if p.key == key:
             return p
     return align.Placement(key, None, 0.0, [], False, False, 0.0)
@@ -389,16 +413,24 @@ def run_once(cfg: Config, log: Log, dry_run: bool = False, limit: int | None = N
         if m is None or not m.get("played", True):
             continue
         try:
-            s = stream_for(cfg, streams, m, main_field(sched))
-            if not s:
+            cands = streams_for(streams, m, main_field(sched))
+            if not cands:
                 raise MatchwatchError("no stream covers this match yet")
-            tr = ensure_transcript(cfg, s, engine_box, log)
-            if not tr or not tr.get("words"):
-                raise MatchwatchError("no transcript yet")
-            p = place(sched, s, tr, m)
-            if p.start is None or not p.confident:
-                raise MatchwatchError(f"not placed confidently (hits {p.hits}, "
-                                      f"start {p.start})")
+            why: list[str] = []
+            placed = None
+            for s in cands:
+                tr = ensure_transcript(cfg, s, engine_box, log)
+                if not tr or not tr.get("words"):
+                    why.append(f"{s['video']}: no transcript yet")
+                    continue
+                p = place(sched, s, tr, m)
+                if p.start is not None and p.confident:
+                    placed = (s, tr, p)
+                    break
+                why.append(f"{s['video']}: not placed confidently (hits {p.hits})")
+            if placed is None:
+                raise MatchwatchError("; ".join(why))
+            s, tr, p = placed
             log(f"{key}: at {p.start:.0f}s in {s['video']} (hits {p.hits}"
                 f"{', number/score said' if p.named_number else ''})")
             obs = build_observations(cfg, sched, m, s, tr, p, log, stats)

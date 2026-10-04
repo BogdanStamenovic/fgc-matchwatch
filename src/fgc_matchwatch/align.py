@@ -415,9 +415,14 @@ def _dp(specs: Sequence[MatchSpec], anchors: Sequence[tuple[float, str]],
 
 
 def align(words: Sequence[Sequence[Any]], stream_start: float, specs: Sequence[MatchSpec],
-          code_to_name: dict[str, str], use_numbers: bool = True) -> list[Placement]:
+          code_to_name: dict[str, str], use_numbers: bool = True,
+          trust_schedule: bool = True) -> list[Placement]:
     """use_numbers=False ignores spoken match numbers and scores; the evaluation
-    uses that to keep them as independent ground truth."""
+    uses that to keep them as independent ground truth.
+
+    trust_schedule=False drops the time prior from the first pass (order, teams
+    and call-outs only). For matches that slipped off their scheduled day: the
+    2025 round robin was scheduled for Day 2 and played on Day 3."""
     specs = sorted(specs, key=lambda m: (m.scheduled, m.number))
     if not specs or not words:
         return [Placement(m.key, None, 0.0, [], False, False, 0.0) for m in specs]
@@ -477,7 +482,8 @@ def align(words: Sequence[Sequence[Any]], stream_start: float, specs: Sequence[M
         return m.scheduled - stream_start
 
     # Pass 1: wide prior. The event can run 40+ minutes behind schedule.
-    p1 = _dp(specs, anchors, hits, mentions, flat, sigma=900.0, nums=nums, play_t=play_t)
+    p1 = _dp(specs, anchors, hits, mentions, flat, sigma=900.0 if trust_schedule else 1e7,
+             nums=nums, play_t=play_t)
     pts = [(m.scheduled, p.start - flat(m)) for m, p in zip(specs, p1)
            if p.confident and p.start is not None]
     if len(pts) < 2:

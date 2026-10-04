@@ -77,10 +77,12 @@ to 6 times, so about 30 minutes under the timer) before it is given up.
 | distil-large-v3 int8_float16 on the same 10-min clip | 71x (turbo: 54x); caught the same match-number call-outs |
 | large-v3 int8_float16 | **did not fit**: OOM with 2.7 GiB free (cvoiced holds 5.5 GiB) |
 | CPU fallback, `small` int8, 10 threads | 11.6x realtime on talk |
-| Field streams aligned (Day 1 + Day 3, fields 1–5) | 188 matches; 184 placed confidently (97.9%) |
-| Hand-checked fresh sample (15 matches never looked at while tuning) | 15/15 right match; 15/15 start within ~3 s of the spoken "go" |
-| Earlier hand-checked samples (27; used for tuning, so not independent) | 26/26 verifiable right match (1 unverifiable: booth interview over the match); 4 starts were 90–285 s off before the fixes they prompted (end-of-match counts, rock-paper-scissors countdowns, a countdown-less final), all within ~15 s after |
-| Ablated aligner (no number/score features) vs. spoken match number or score read-out | 158 confident; 0 verified wrong (2 flagged, both checker false alarms) |
+| Field streams aligned (Day 1 + Day 3, fields 1–5) | 188 matches; 182 placed confidently (96.8%); the rest have no usable commentary and are skipped |
+| Fresh hand-checked sample 1 (15 matches never looked at while tuning) | 15/15 right match, 15/15 start within ~3 s of the spoken "go" |
+| Fresh hand-checked sample 2 (15 more, drawn after the first round of fixes) | 14/15 right and within ~3 s; 1 wrong but "confident" (t2-41: its play-by-play is missing from the VOD, and it was placed on the score read-out). Fixed since: it is now skipped |
+| Tuning set: 54 hand-labelled starts (`bench/onset_sweep.py`) | 53/54 within 30 s, 52/54 within 10 s; not independent, it is what the fixes were tuned on |
+| Main feed vs. field-5 stream, same 35 Day 1 matches (the same booth audio, so this checks consistency, not truth) | 30/35 agree to within 1 s; of the other 5, 2 sit at a VOD gap, 1 match was restarted, 2 differ by 100–200 s |
+| Ablated aligner (no number/score features) vs. spoken match number or score read-out | 0 verified wrong among confident placements (2 flagged, both checker false alarms) |
 | LLM (Sonnet via `claude -p`), 12 matches / 72 observations | 12/12 valid JSON first try; 132 claims kept, 13 dropped by verification (9%); 57/72 observations have at least one fact |
 
 Why turbo over distil: distil was 30% faster on the clip, but both are far
@@ -177,11 +179,12 @@ node server/server.mjs`, whose `/api/interest` then returns Serbia's 2025 matche
   field, but it was empty for every 2025 match. If it is filled live in 2026 it
   becomes the prior; the alignment does not depend on it.
 - **Main-stage booth talk is weaker evidence.** Field 5 commentators
-  interview guests during matches. Alignment still works there (35/38 on
-  Day 1), but observations from those matches often say little about the
-  teams.
-- **Matches with no commentary produce nothing.** One 2025 match (t2-43)
-  falls in a stretch of field-1 VOD with no speech at all.
+  interview guests during matches, and the main feed sometimes cuts to pit
+  interviews. Alignment is less certain there (the 2 main-feed vs. field-5
+  disagreements above), and observations from those matches often say little
+  about the teams.
+- **Matches with no commentary produce nothing.** Some 2025 matches (t2-43,
+  t2-41) fall in stretches of VOD with no speech for the match itself.
 - **Misheard names lose facts, never invent them.** "Lesotho" transcribed as
   "Lizotho" means its quotes are not attributed and its observation is empty.
   The alias table in `align.py` is the fix, one country at a time.
