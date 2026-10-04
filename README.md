@@ -83,7 +83,7 @@ to 6 times, so about 30 minutes under the timer) before it is given up.
 | same, main stage / main feed (constant talk) | median 60–72x realtime |
 | distil-large-v3 int8_float16 on the same 10-min clip | 71x (turbo: 54x); caught the same match-number call-outs |
 | large-v3 int8_float16 | **did not fit**: OOM with 2.7 GiB free (cvoiced holds 5.5 GiB) |
-| CPU fallback, `small` int8, 10 threads | 11.6x realtime on talk |
+| CPU fallback, `small` int8, 10 threads | 11.6x realtime on talk, 37x on a field stream; alignment on 2025 Day 3 field 4: 12/12 matches within 10 s of the turbo placements (5.8 vs 6.0 countries named per match). Effect on LLM facts not measured |
 | Field streams aligned (Day 1 + Day 3, fields 1–5) | 188 matches; 182 placed confidently (96.8%); the rest have no usable commentary and are skipped |
 | Fresh hand-checked sample 1 (15 matches never looked at while tuning) | 15/15 right match, 15/15 start within ~3 s of the spoken "go" |
 | Fresh hand-checked sample 2 (15 more, drawn after the first round of fixes) | 14/15 right and within ~3 s; 1 wrong but "confident" (t2-41: its play-by-play is missing from the VOD, and it was placed on the score read-out). Fixed since: it is now skipped |
@@ -115,7 +115,7 @@ uv pip install --python .venv/bin/python -e ".[gpu,dev]"
 
 Needs `ffmpeg`, `node` (yt-dlp's JS runtime for YouTube), and `claude`
 logged in. Config goes in `/mnt/offload/fgc-matchwatch/matchwatch.env` (never
-in git):
+in git; `matchwatch.env.example` is the template):
 
 ```sh
 SCOUT_URL=https://scout.example
@@ -154,8 +154,11 @@ systemctl --user enable --now fgc-matchwatch.timer
 Runs every 5 minutes, 00:00–10:55 UTC (09:00–19:55 KST), 7–10 Oct 2026. Each
 run discovers streams, starts recorders for live ones, transcribes new audio,
 and processes new played matches of interest. archserver must be awake during
-those hours with ≥ 1.8 GiB VRAM free; otherwise Whisper falls back to the CPU
-`small` model (~12x realtime, lower quality, still works).
+those hours. With ≥ 1.8 GiB VRAM free Whisper runs on the GPU; otherwise on
+the CPU `small` model, which kept up in the test (a full event hour of five
+field streams plus the main feed is roughly 13 CPU-minutes). On archserver
+cvoiced holds ~7.4 GiB when its model is loaded, so the GPU path needs either
+cvoiced idle-unloaded or `MATCHWATCH_GPU_RELEASE_CMD` set to its `/unload`.
 
 ### Test bed (2025)
 
