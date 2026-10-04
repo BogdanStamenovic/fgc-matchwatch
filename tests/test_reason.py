@@ -38,6 +38,7 @@ def test_verify_keeps_backed_drops_invented_and_misattributed() -> None:
     assert out["KEN"].climb_zone is None
     assert out["KEN"].dropped == 2 and out["KEN"].kept == 1
     assert out["KEN"].evidence == ["already going towards the accelerator"]
+    assert out["KEN"].summary == "Good at: accelerator."
     # Paraguay is never named near that quote: dropped, and its summary with it.
     assert out["PAR"].good_at == [] and out["PAR"].summary == ""
 

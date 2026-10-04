@@ -29,6 +29,11 @@ from typing import Any
 from rapidfuzz import fuzz
 
 MATCH_LEN = 150.0
+# Play-onset anchors (see align()). Tuned head-to-head in bench/onset_sweep.py.
+ONSET = True
+ONSET_BACK = 300.0
+ONSET_FWD = 400.0
+ONSET_PENALTY = 0.75
 PRE = 200.0
 POST = 165.0
 
@@ -118,16 +123,20 @@ def parse_number(tokens: Sequence[str], i: int) -> tuple[int | None, int]:
 class Tok:
     t: float
     w: str
+    stop: bool = False  # punctuation followed this word ("match, 22 points")
 
 
 def tokens(words: Sequence[Sequence[Any]]) -> list[Tok]:
     out: list[Tok] = []
     for s, _e, w in words:
         # "one-hundred-twenty" and "3,2,1" arrive as one word sometimes
-        for part in re.split(r"[-,\s]+", str(w)):
+        raw = str(w)
+        for part in re.split(r"[-,\s]+", raw):
             n = norm(part)
             if n:
                 out.append(Tok(float(s), n))
+        if out and raw.rstrip()[-1:] in ",.;:?!":
+            out[-1].stop = True
     return out
 
 
@@ -186,7 +195,7 @@ def match_mentions(toks: Sequence[Tok]) -> list[tuple[float, int]]:
     out: list[tuple[float, int]] = []
     words = [t.w for t in toks]
     for i, w in enumerate(words):
-        if w not in ("match", "matches"):
+        if w not in ("match", "matches") or toks[i].stop:
             continue
         j = i + 1
         if j < len(words) and words[j] in ("number", "no"):
@@ -297,10 +306,19 @@ def _play(play_t: Sequence[float], a: float) -> float:
     return max(-3.0, min(3.0, (after - before) / 3.0))
 
 
+def endcount_doubt(play_t: Sequence[float], a: float) -> float:
+    import bisect
+
+    c = a + MATCH_LEN
+    before = bisect.bisect_left(play_t, c) - bisect.bisect_left(play_t, a)
+    after = bisect.bisect_left(play_t, c + MATCH_LEN) - bisect.bisect_left(play_t, c)
+    return max(0.0, min(3.0, (after - before) / 4.0))
+
+
 def _score(m: MatchSpec, a: float, kind: str, hits: Sequence[tuple[float, str]],
            mentions: Sequence[tuple[float, int]], expected: float, sigma: float,
-           nums: Sequence[tuple[float, int]] = (), play: float = 0.0
-           ) -> tuple[float, list[str], bool]:
+           nums: Sequence[tuple[float, int]] = (), play: float = 0.0,
+           play_t: Sequence[float] = ()) -> tuple[float, list[str], bool]:
     seen = _window_codes(hits, a - PRE, a + POST)
     mine = set(m.countries)
     got = sorted(seen & mine)
@@ -314,10 +332,15 @@ def _score(m: MatchSpec, a: float, kind: str, hits: Sequence[tuple[float, str]],
         named = True
     if kind == "mention":
         s -= 0.5  # weaker evidence of the actual start than a countdown
+        # Play talk tells a start from an end countdown; it says nothing for
+        # a call-out, and on the main stage it rewards endgame narration.
+        s -= max(0.0, play)
     elif kind == "endcount":
-        s -= 0.25
+        # This anchor assumes the countdown at a+150 ended a match. If there is
+        # more play talk after that countdown than before it, it was a start.
+        s -= 0.25 + endcount_doubt(play_t, a)
     elif kind == "onset":
-        s -= 0.75  # where play talk starts lags the real start by a few seconds
+        s -= ONSET_PENALTY
     return s, got, named
 
 
@@ -339,7 +362,7 @@ def _dp(specs: Sequence[MatchSpec], anchors: Sequence[tuple[float, str]],
                 sc[i][j] = NEG
                 continue
             s, got, named = _score(m, a, kind, hits, mentions, e, sigma, nums,
-                                   _play(play_t, a))
+                                   _play(play_t, a), play_t)
             sc[i][j] = s
             meta[i][j] = (got, named)
     # best[i][j] = best total for matches[:i+1] with match i on anchor j (or skipped
@@ -383,7 +406,9 @@ def _dp(specs: Sequence[MatchSpec], anchors: Sequence[tuple[float, str]],
             continue
         got, named = meta[i][k]
         n = len(m.countries)
-        confident = named or len(got) >= max(3, (n + 1) // 2)
+        # A spoken number or score alone is not enough: 2025 t2-41 had no audio for
+        # its play, only the read-out "scores are official for match number 41".
+        confident = (named and len(got) >= 2) or len(got) >= max(3, (n + 1) // 2)
         out.append(Placement(m.key, anchors[k][0], sc[i][k], got, named, confident, e,
                              anchors[k][1]))
     return out
@@ -419,8 +444,9 @@ def align(words: Sequence[Sequence[Any]], stream_start: float, specs: Sequence[M
                 first = [x for x in play_t if t - 40 <= x <= t + 5]
                 at = (first[0] - 3) if first else t
                 # Fallback only: an onset next to a real countdown just competes
-                # with it and loses accuracy (measured: 4 of 27 got 30-80 s worse).
-                if not any(k != "mention" and at - 120 <= a <= at + 5 for a, k in anchors):
+                # with it and loses accuracy (measured on 54 hand-labelled starts: onsets near a countdown made 4 of them 30-380 s worse; 300 s back / 400 s ahead was the best window).
+                if ONSET and not any(k != "mention" and at - ONSET_BACK <= a <= at + ONSET_FWD
+                                     for a, k in anchors):
                     anchors.append((at, "onset"))
                 last_peak = t
             prev, cur, t = cur, nxt, t + 5
@@ -434,7 +460,14 @@ def align(words: Sequence[Sequence[Any]], stream_start: float, specs: Sequence[M
         merged.append(a)
     anchors = merged
     have = [a for a, _ in anchors]
+    readout = {"score", "scores", "points", "official", "results", "result"}
+    words_t = [(t.t, t.w) for t in toks]
+    import bisect as _b
+
     for t, _n in mentions:
+        i = _b.bisect_left(words_t, (t, ""))
+        if any(w in readout for _, w in words_t[max(0, i - 6):i + 10]):
+            continue  # "scores are official for match 41": after the match, not a start
         s = t + 20.0
         if not any(abs(s - a) < 60 for a in have):
             anchors.append((s, "mention"))

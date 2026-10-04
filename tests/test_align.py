@@ -72,3 +72,8 @@ def test_align_empty_transcript() -> None:
 def test_rock_paper_scissors_countdown_is_not_a_start() -> None:
     toks = align.tokens(W(0, "we're gonna do three two one rock paper scissors shoot who won"))
     assert align.countdowns(toks) == []
+
+
+def test_match_followed_by_comma_is_not_a_callout() -> None:
+    toks = align.tokens(W(0, "less than a minute on the match, 22 points on the board"))
+    assert align.match_mentions(toks) == []

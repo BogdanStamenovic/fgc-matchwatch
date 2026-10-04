@@ -168,9 +168,25 @@ def post_observation(cfg: Config, obs: dict[str, Any]) -> None:
 
 # ---------- streams ----------
 
-def stream_for(cfg: Config, streams: dict[str, Any], m: dict[str, Any]) -> dict[str, Any] | None:
+def main_field(sched: Schedule) -> int | None:
+    """The main-stage field: the one the main program feed shows. In 2025 it was
+    field 5, which hosted 139 of 381 matches (others ~60) and every playoff."""
+    import os
+    from collections import Counter
+
+    env = os.environ.get("MATCHWATCH_MAIN_FIELD")
+    if env:
+        return int(env)
+    c = Counter(m.get("field") for m in sched.matches if m.get("field"))
+    return c.most_common(1)[0][0] if c else None
+
+
+def stream_for(cfg: Config, streams: dict[str, Any], m: dict[str, Any],
+               main: int | None = None) -> dict[str, Any] | None:
     """The field stream covering this match: same field, went live before the match,
-    still running or long enough to contain it. Falls back to the main feed."""
+    still running or long enough to contain it. Falls back to the main feed only
+    for the main-stage field: the main feed never shows the side fields, and
+    aligning a side-field match against it would invent a placement."""
     t = epoch(m["scheduledTime"])
     fld = m.get("field") or m.get("fieldNumber")
 
@@ -186,7 +202,7 @@ def stream_for(cfg: Config, streams: dict[str, Any], m: dict[str, Any]) -> dict[
         return t <= st + dur * 1.6 + 3600
 
     cands = [s for s in streams.values() if s.get("field") == fld and covers(s)]
-    if not cands:
+    if not cands and main is not None and fld == main:
         cands = [s for s in streams.values() if s.get("field") is None and covers(s)]
     if not cands:
         return None
@@ -357,7 +373,7 @@ def run_once(cfg: Config, log: Log, dry_run: bool = False, limit: int | None = N
         streams = load_streams(cfg)
         for w in todo[:limit]:
             m = sched.by_key(w["key"])
-            s = stream_for(cfg, streams, m) if m else None
+            s = stream_for(cfg, streams, m, main_field(sched)) if m else None
             log(f"  would process {w['key']} (priority {w.get('priority')}): "
                 + (f"stream {s['video']} {s['title']!r}" if s else "no stream known yet"))
         return 0
@@ -373,7 +389,7 @@ def run_once(cfg: Config, log: Log, dry_run: bool = False, limit: int | None = N
         if m is None or not m.get("played", True):
             continue
         try:
-            s = stream_for(cfg, streams, m)
+            s = stream_for(cfg, streams, m, main_field(sched))
             if not s:
                 raise MatchwatchError("no stream covers this match yet")
             tr = ensure_transcript(cfg, s, engine_box, log)

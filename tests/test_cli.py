@@ -50,7 +50,10 @@ def test_stream_for_prefers_field_stream() -> None:
     cfg = None
     assert pipeline.stream_for(cfg, streams, m)["video"] == "f1"  # type: ignore[arg-type,index]
     del streams["f1"]
-    assert pipeline.stream_for(cfg, streams, m)["video"] == "main"  # type: ignore[arg-type,index]
+    # Side field with no field stream: the main feed does not show it.
+    assert pipeline.stream_for(cfg, streams, m, main=5) is None  # type: ignore[arg-type]
+    m5 = {**m, "field": 5}
+    assert pipeline.stream_for(cfg, streams, m5, main=5)["video"] == "main"  # type: ignore[arg-type,index]
 
 
 def test_dry_run_with_explicit_matches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

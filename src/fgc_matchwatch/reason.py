@@ -65,7 +65,6 @@ SYSTEM = (
 SCHEMA = """{
   "teams": {
     "<CODE>": {
-      "summary": "2-4 sentences, only what the quotes support; '' if nothing was said",
       "goodAt":   [{"claim": "short", "quote": "verbatim words from the transcript"}],
       "badAt":    [{"claim": "short", "quote": "..."}],
       "problems": [{"claim": "short", "quote": "..."}],
@@ -233,6 +232,30 @@ def _claims(v: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _join(xs: list[str]) -> str:
+    return "; ".join(x.rstrip(". ") for x in xs)
+
+
+def compose_summary(tf: TeamFacts) -> str:
+    """2-4 plain sentences from verified facts only; '' when there are none."""
+    parts: list[str] = []
+    if tf.strategy:
+        parts.append(f"Strategy: {tf.strategy.rstrip('. ')}.")
+    if tf.good_at:
+        parts.append(f"Good at: {_join(tf.good_at)}.")
+    weak = tf.bad_at + [p for p in tf.problems if p not in tf.bad_at]
+    if weak:
+        parts.append(f"Problems: {_join(weak)}.")
+    extra = []
+    if tf.climb_zone:
+        extra.append(f"climbed to zone/level {tf.climb_zone}")
+    if tf.shooter_works is not None:
+        extra.append("shooter works" if tf.shooter_works else "shooter not working")
+    if extra:
+        parts.append(f"Observed: {', '.join(extra)}.")
+    return " ".join(parts[:4])
+
+
 def _check(c: dict[str, Any], code: str, tf: TeamFacts, ver: Verifier) -> bool:
     q = str(c.get("quote") or "")
     at = ver.locate(q)
@@ -271,10 +294,10 @@ def verify(raw: dict[str, Any], codes: Sequence[str], ver: Verifier) -> dict[str
         for c in _claims(t.get("shooterWorks")):
             if isinstance(c.get("value"), bool) and ok(c):
                 tf.shooter_works = bool(c["value"])
-        # The summary is free text; keep it only if at least one claim survived,
-        # otherwise it would be the one unverified thing we publish.
-        summ = str(t.get("summary") or "").strip()
-        tf.summary = summ if tf.kept else ""
+        # The summary is built from the verified claims only. The LLM's own prose
+        # summary is not used: in the 2025 test it repeated claims whose quotes
+        # had been dropped (e.g. a climb that no verified quote supported).
+        tf.summary = compose_summary(tf)
         out[code] = tf
     return out
 

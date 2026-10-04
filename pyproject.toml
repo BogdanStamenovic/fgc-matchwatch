@@ -48,6 +48,8 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
+# bench/ holds the one-off measurement scripts behind the README numbers.
+extend-exclude = ["bench"]
 
 [tool.mypy]
 python_version = "3.10"
