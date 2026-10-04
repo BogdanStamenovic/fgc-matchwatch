@@ -1,0 +1,16 @@
+schema: 1
+name: fgc-matchwatch
+description: Find FIRST Global Challenge matches in the livestream, transcribe the commentary and turn it into per-team scouting observations.
+homepage: https://github.com/BogdanStamenovic/fgc-matchwatch
+tags: [cli, whisper, scouting, python]
+install:
+  platforms: [linux]
+  setup:
+    linux:
+      - python -m venv .venv
+      - .venv/bin/python -m pip install -e ".[gpu]"
+  update:
+    linux: ['.venv/bin/python -m pip install -e ".[gpu]"']
+  remove: []
+command:
+  linux: .venv/bin/fgc-matchwatch

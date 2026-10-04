@@ -1,0 +1,14 @@
+[Unit]
+Description=fgc-matchwatch: scout new FGC matches from the livestream commentary
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# MATCHWATCH_HOME/matchwatch.env holds SCOUT_URL and SCOUT_KEY (never in git).
+Environment=MATCHWATCH_HOME=/mnt/offload/fgc-matchwatch
+ExecStart=@EXE@ watch --once
+# One pass can include transcribing a whole field stream (~3 min per 5 h on the
+# GPU, ~30 min on CPU) plus a few LLM calls.
+TimeoutStartSec=3600
+Nice=5

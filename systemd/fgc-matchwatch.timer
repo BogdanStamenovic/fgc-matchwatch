@@ -1,0 +1,12 @@
+[Unit]
+Description=Run fgc-matchwatch every 5 minutes during FGC 2026 (Incheon) event hours
+
+[Timer]
+# Event matches run 09:00-17:30 KST = 00:00-08:30 UTC, 7-10 Oct 2026. The window
+# runs to 10:55 UTC because schedules slip and the last results post late.
+OnCalendar=2026-10-07..10 00..10:00/5:00 UTC
+Persistent=false
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
