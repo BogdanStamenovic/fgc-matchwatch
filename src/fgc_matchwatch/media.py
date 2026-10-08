@@ -198,6 +198,25 @@ def download_audio(video: str, dest_dir: Path, log: Callable[[str], None]) -> Pa
     raise MatchwatchError(f"download of {video} produced no file")
 
 
+def record_live_file(video: str, dest: Path, log: Callable[[str], None]) -> int:
+    """Record a live stream's audio from its start straight to a file.
+
+    yt-dlp assembles the DASH fragments itself and writes `dest` + ".part" as it
+    goes, which ffmpeg can read while it grows. This replaced piping into
+    ffmpeg: with --live-from-start yt-dlp picks DASH (format 140) whose
+    fragmented MP4 ffmpeg cannot open from a pipe, so on 2026 day 1 four of
+    five field recorders stalled or died. Catch-up measured at ~25x realtime.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    p = subprocess.run(
+        [ytdlp_bin(), "--js-runtimes", "node", "--no-warnings", "-q", "--live-from-start",
+         "-f", "140/bestaudio[ext=m4a]/bestaudio", "-o", str(dest), "--", video],
+        capture_output=True, text=True, check=False)
+    _check_block(p.stderr or "")
+    log(f"recorder for {video} ended (yt-dlp {p.returncode}): {(p.stderr or '').strip()[-200:]}")
+    return p.returncode
+
+
 def record_live(video: str, dest: Path, log: Callable[[str], None]) -> int:
     """Record a live stream's audio from its start into `dest` until it ends.
 
@@ -213,7 +232,11 @@ def record_live(video: str, dest: Path, log: Callable[[str], None]) -> int:
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     ff = subprocess.Popen(
-        ["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-i", "pipe:0", "-vn", "-ac", "1",
+        # Live HLS audio from yt-dlp carries corrupt AAC packets around stream
+        # starts and format switches (seen on four of five 2026 day-1 fields);
+        # without these flags ffmpeg stops writing while staying alive.
+        ["ffmpeg", "-nostdin", "-loglevel", "error", "-y", "-err_detect", "ignore_err",
+         "-fflags", "+discardcorrupt+genpts", "-i", "pipe:0", "-vn", "-ac", "1",
          "-c:a", "libopus", "-b:a", "48k", "-f", "ogg", str(dest)],
         stdin=ytdlp.stdout,
     )

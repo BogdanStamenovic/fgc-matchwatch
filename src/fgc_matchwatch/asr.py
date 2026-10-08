@@ -13,6 +13,7 @@ from __future__ import annotations
 import ctypes
 import glob
 import json
+import re
 import subprocess
 import sys
 import time
@@ -85,8 +86,17 @@ def probe_duration(path: Path) -> float:
     ).stdout.strip()
     try:
         return float(out)
-    except ValueError as exc:
-        raise MatchwatchError(f"cannot read duration of {path}") from exc
+    except ValueError:
+        pass
+    # A live .ogg still being written often has no duration in its header;
+    # a stream-copy scan reads packet times without decoding (seconds per hour).
+    scan = subprocess.run(["ffmpeg", "-nostdin", "-v", "info", "-i", str(path), "-c", "copy", "-f", "null", "-"],
+                          capture_output=True, text=True, check=False).stderr
+    times = re.findall(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)", scan)
+    if times:
+        h, m, s = times[-1]
+        return int(h) * 3600 + int(m) * 60 + float(s)
+    raise MatchwatchError(f"cannot read duration of {path}")
 
 
 # 2026 and 2025 game words plus the phrases alignment depends on. Whisper's

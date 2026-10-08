@@ -178,5 +178,5 @@ def _dispatch(args: argparse.Namespace, cfg: Config, lg: Callable[[str], None]) 
         return 0
     if args.cmd == "record":
         cfg.ensure_dirs()
-        return media.record_live(args.video, cfg.audio_dir / f"{args.video}.live.ogg", lg)
+        return media.record_live_file(args.video, cfg.audio_dir / f"{args.video}.live.m4a", lg)
     return 2

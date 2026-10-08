@@ -27,6 +27,11 @@ FGA = "https://api.first.global/v1"
 PRE_ROLL = 60.0  # intro / alliance roll call before the countdown
 POST_ROLL = 75.0  # result read-out after the 2:30
 MAX_ATTEMPTS = 6  # a match not found yet is retried on later runs, then given up
+# ...except while the cause can still go away: audio not recorded yet, a live
+# file not readable yet, a stream not up yet. Those retry for this long.
+TRANSIENT = ("cannot read duration", "no transcript yet", "no stream covers", "not placed confidently", "ffmpeg failed")
+RETRY_HOURS = 8
+STALL_SECONDS = 240
 
 Log = Callable[[str], None]
 
@@ -227,6 +232,16 @@ def _unit(vid: str) -> str:
     return "fgc-matchwatch-rec-" + "".join(c if c.isalnum() else "_" for c in vid)
 
 
+def live_audio(cfg: Config, vid: str) -> Path:
+    """The growing recording of a live stream: the file recorder's output
+    (.live.m4a.part while recording, .live.m4a when done) or the older piped
+    .live.ogg, whichever exists."""
+    for name in (f"{vid}.live.m4a.part", f"{vid}.live.m4a", f"{vid}.live.ogg"):
+        if (cfg.audio_dir / name).exists():
+            return cfg.audio_dir / name
+    return cfg.audio_dir / f"{vid}.live.m4a.part"
+
+
 def recorder_active(vid: str) -> bool:
     import subprocess
 
@@ -253,8 +268,16 @@ def ensure_recorders(cfg: Config, streams: dict[str, Any], log: Log) -> None:
         return
     exe = str(Path(sys.executable).parent / "fgc-matchwatch")
     for vid, s in streams.items():
-        if s.get("live_status") != "is_live" or recorder_active(vid):
+        if s.get("live_status") != "is_live":
             continue
+        if recorder_active(vid):
+            # Watchdog: a recorder that is "running" but whose file stopped
+            # growing has stalled (2026 day 1: four of five fields, for hours).
+            rec = live_audio(cfg, vid)
+            if rec.exists() and time.time() - rec.stat().st_mtime < STALL_SECONDS:
+                continue
+            subprocess.run(["systemctl", "--user", "stop", _unit(vid)], capture_output=True, timeout=30, check=False)
+            log(f"recorder for {vid} stalled (no new audio for {STALL_SECONDS // 60} min); restarting")
         r = subprocess.run(
             ["systemd-run", "--user", "--collect", f"--unit={_unit(vid)}",
              f"--setenv=MATCHWATCH_HOME={cfg.home}", exe, "record", "--", vid],
@@ -270,7 +293,7 @@ def ensure_transcript(cfg: Config, s: dict[str, Any], engine_box: list[asr.Engin
     tr = asr.load_transcript(out)
     if tr and tr.get("complete"):
         return tr
-    rec = cfg.audio_dir / f"{vid}.live.ogg"
+    rec = live_audio(cfg, vid)
     recording = s.get("live_status") == "is_live" or (rec.is_file() and recorder_active(vid))
     if recording:
         if not rec.is_file():
@@ -453,7 +476,10 @@ def run_once(cfg: Config, log: Log, dry_run: bool = False, limit: int | None = N
             pend["attempts"] += 1
             pend["error"] = str(exc)[:300]
             log(f"{key}: {exc} (attempt {pend['attempts']})")
-            if pend["attempts"] >= MAX_ATTEMPTS:
+            pend.setdefault("first", int(time.time()))
+            transient = any(x in pend["error"] for x in TRANSIENT)
+            expired = time.time() - pend["first"] > RETRY_HOURS * 3600
+            if (pend["attempts"] >= MAX_ATTEMPTS and not transient) or expired:
                 st["done"][key] = {"ts": int(time.time()), "gaveUp": pend["error"]}
                 st["pending"].pop(key, None)
         save_state(cfg, st)
